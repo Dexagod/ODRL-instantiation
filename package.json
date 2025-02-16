@@ -1,0 +1,16 @@
+{
+  "dependencies": {
+    "jest-rdf": "^2.0.0",
+    "jsonld": "^8.3.3",
+    "n3": "^1.23.1",
+    "odrl-evaluator": "^0.1.1",
+    "rdf-js": "^4.0.2",
+    "rdf-serialize": "^4.0.1",
+    "stream-to-string": "^1.2.1",
+    "streamify-array": "^1.0.1",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "@types/jsonld": "^1.5.15"
+  }
+}
