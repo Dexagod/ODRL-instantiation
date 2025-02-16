@@ -1,4 +1,4 @@
-import { BlankNode, NamedNode, Quad } from 'rdf-js';
+import { BlankNode, Literal, NamedNode, Quad } from 'rdf-js';
 import { OdrlPolicyExtractor, ActiveConflictResolver, PriorityConflictResolver, DenyConflictResolver, ConflictEvaluator, RDF, } from "../conflict_resolution/policy-conflict-resolver/src"
 import { WrappedEvaluatorHandler } from "../conflict_resolution/policy-conflict-resolver/src/WrappedEvaluatorHandler"
 import { ODRLEngineMultipleSteps, ODRLEvaluator} from  "odrl-evaluator"
@@ -150,7 +150,7 @@ export async function convertODRLPoliciesToInstantiatedPolicy(instantiationReque
         const setType = store.getQuads(null, RDF.terms.type, namedNode("http://www.w3.org/ns/odrl/2/Set"), null)
         const policyID = policyType.length === 1 ? policyType[0].subject : setType[0].subject
         
-        if (policyType.length === 1) {
+        if (policyType.length === 1 || setType.length === 1) {
             agreementStore.addQuad(quad(agreementId, namedNode('http://purl.org/dc/terms/references'), policyID))
         }   
     }
@@ -166,15 +166,15 @@ export async function convertODRLPoliciesToInstantiatedPolicy(instantiationReque
     // *****************************
 
     for (let policyQuads of instantiationPolicies) {
-        const store = new Store(policyQuads)
-        const policyType = store.getQuads(null, RDF.terms.type, namedNode("http://www.w3.org/ns/odrl/2/Policy"), null)
-        const setType = store.getQuads(null, RDF.terms.type, namedNode("http://www.w3.org/ns/odrl/2/Set"), null)
+        const policyStore = new Store(policyQuads)
+        const policyType = policyStore.getQuads(null, RDF.terms.type, namedNode("http://www.w3.org/ns/odrl/2/Policy"), null)
+        const setType = policyStore.getQuads(null, RDF.terms.type, namedNode("http://www.w3.org/ns/odrl/2/Set"), null)
         const policyID = policyType.length === 1 ? policyType[0].subject : setType[0].subject
         
 
-        const permissions = store.getQuads(policyID, namedNode("http://www.w3.org/ns/odrl/2/permission"), null, null)
-        const prohibitions = store.getQuads(policyID, namedNode("http://www.w3.org/ns/odrl/2/prohibition"), null, null)
-        const obligations = store.getQuads(policyID, namedNode("http://www.w3.org/ns/odrl/2/obligation"), null, null)
+        const permissions = policyStore.getQuads(policyID, namedNode("http://www.w3.org/ns/odrl/2/permission"), null, null)
+        const prohibitions = policyStore.getQuads(policyID, namedNode("http://www.w3.org/ns/odrl/2/prohibition"), null, null)
+        const obligations = policyStore.getQuads(policyID, namedNode("http://www.w3.org/ns/odrl/2/obligation"), null, null)
 
 
         // todo: this is a shortcut. These different rule types have different expressions, and should be handled as such
@@ -187,35 +187,50 @@ export async function convertODRLPoliciesToInstantiatedPolicy(instantiationReque
             .concat(prohibitionRuleIds.map(id => {return({pred: "http://www.w3.org/ns/odrl/2/prohibition", id})}))
             .concat(obligationRuleIds.map(id => {return({pred: "http://www.w3.org/ns/odrl/2/obligation", id})}));
 
-        for ( const {id, pred} of rules ) {
+        for ( const {id: policyRuleId, pred} of rules ) {
 
             // *****************************
             // 10. Create a rule type - action entry on the agreement
             // *****************************
 
-            const ruleAction = store.getObjects(id, "http://www.w3.org/ns/odrl/2/action", null)
+            const ruleAction = policyStore.getObjects(policyRuleId, "http://www.w3.org/ns/odrl/2/action", null)
             if(!ruleAction || !ruleAction.length) continue;
+            const actionTerm = ruleAction[0]
 
-            const ruleId = namedNode(`urn:rule:${uuidv4()}`)
-            agreementStore.addQuad(quad(agreementId, namedNode(pred), ruleId))
-            agreementStore.addQuad(quad(agreementId, namedNode("http://www.w3.org/ns/odrl/2/action"), ruleAction[0]))
+            const agreementRuleId = namedNode(`urn:rule:${uuidv4()}`)
+            agreementStore.addQuad(quad(agreementId, namedNode(pred), agreementRuleId))
+            agreementStore.addQuad(quad(agreementRuleId, namedNode("http://www.w3.org/ns/odrl/2/action"), actionTerm))
 
             // *****************************
             // 11. For all constraints mapped to that rule, instantiate the target to the Request target 
             // *****************************
 
-            // todo: for each action int he request, a separate negotiation should be done actually in hindsight
-
-            const requestTarget = requestStore.getQuads(null, namedNode("http://www.w3.org/ns/odrl/2/target"), null, null).map(q => q.object)
-            if (!requestTarget || !requestTarget.length) { throw new Error("Request target not found") }
+            // todo: for each action in the request, a separate negotiation should be done actually in hindsight
+            const target = getStoreValue(requestStore, null, namedNode("http://www.w3.org/ns/odrl/2/target"), null).object
+            agreementStore.addQuad(quad(agreementRuleId, namedNode("http://www.w3.org/ns/odrl/2/target"), target))
 
             // *****************************
-            // 12. Set assigned to be the Entity the managing user (known for now, distill how later?)
+            // 12. Set assigner to be the Entity the managing user (known for now, distill how later?)
             // *****************************
+            
+            try {
+                const assigner = getStoreValue(requestStore, null, namedNode("http://www.w3.org/ns/odrl/2/assigner"), null).object
+                agreementStore.addQuad(quad(agreementRuleId, namedNode("http://www.w3.org/ns/odrl/2/assigner"), assigner))
+            } catch (e) {
+                console.error('No assigner found in request, cannot add assigner to Agreement.')
+            }
+            
 
             // *****************************
             // 13. Set the assignee to be the assignee of the ODRL request
             // *****************************
+
+            try {
+                const assignee = getStoreValue(requestStore, null, namedNode("http://www.w3.org/ns/odrl/2/assignee"), null).object
+                agreementStore.addQuad(quad(agreementRuleId, namedNode("http://www.w3.org/ns/odrl/2/assignee"), assignee))
+            } catch (e) {
+                console.error('No assignee found in request, cannot add assignee to Agreement.')
+            }
 
             // *****************************
             // 14. For each constraint assigned to the rule type - action combination
@@ -224,9 +239,29 @@ export async function convertODRLPoliciesToInstantiatedPolicy(instantiationReque
             //     triple defined on that same rule in case of an odrl:eq operator or in case the operator and value can be
             //     converted in a predicate that is semantically equal (e.g. an enddate predicate instead of a lesser than - date constraint)
             // *****************************
+            try {
 
+                console.log(policyStore.getQuads(null, "http://www.w3.org/ns/odrl/2/constraint", null, null))
+                console.log(policyStore.getQuads(null, null, null, null))
 
+                const policyConstraints = getStoreValueArray(policyStore, policyRuleId as NamedNode, namedNode("http://www.w3.org/ns/odrl/2/constraint"), null)
+                    .map(quad => quad.object as NamedNode)
 
+                for (let policyConstraintId of policyConstraints) {
+                    const constraintQuads = getStoreValueArray(policyStore, policyConstraintId, null, null)
+                    // const constraintOperator = getStoreValue(policyStore, policyConstraintId, namedNode("http://www.w3.org/ns/odrl/2/operator"), null)
+                    // const constraintRightOperand = getStoreValue(policyStore, policyConstraintId, namedNode("http://www.w3.org/ns/odrl/2/rightOperand"), null)
+                    // const constraintLeftOperand = getStoreValue(policyStore, policyConstraintId, namedNode("http://www.w3.org/ns/odrl/2/leftOperand"), null)
+
+                    const agreementConstraintId = namedNode(`urn:constraint:${uuidv4()}`)
+                    agreementStore.addQuad(quad(agreementRuleId, namedNode("http://www.w3.org/ns/odrl/2/constraint"), agreementConstraintId))
+                    for (const quad of constraintQuads) {
+                        agreementStore.addQuad(agreementConstraintId, quad.predicate, quad.object)
+                    }
+                }
+            } catch (e) {
+                console.error('No constraints found in policy, cannot add constraints to Agreement.')
+            }
         }
     }
 
@@ -234,6 +269,50 @@ export async function convertODRLPoliciesToInstantiatedPolicy(instantiationReque
     // 15. Return the generated agreement.
     // *****************************
 
-  return [];
+    const agreementFrame = {
+        "@context": "http://www.w3.org/ns/odrl.jsonld",
+        "@type": [ "Agreement" ]
+    }
 
+    const agreementQuads = agreementStore.getQuads(null, null, null, null)
+
+    // Convert quads to a JSON object in JSON-LD format
+    const quadStream = streamifyArray(agreementQuads.slice(0)); // slice to make copy of array, else stream consumes array
+    const textStream = rdfSerializer.serialize(quadStream, { contentType: 'application/ld+json' });
+    const jsonLdString = await stringifyStream(textStream)
+
+    // frame the policy
+    const doc = JSON.parse(jsonLdString)
+    const agreement : ODRLPolicy = ( await frame(doc, agreementFrame) ) as ODRLPolicy;
+
+    // todo: some verification step here to check policy integrity
+
+    console.log("Resulting agreement")
+    console.log(agreement)
+
+    return agreementQuads
+
+}
+
+function getStoreValue(
+    store: Store, 
+    subject: null | NamedNode | BlankNode, 
+    predicate: null | NamedNode, 
+    object: null | NamedNode | BlankNode | Literal
+): Quad {
+    const quads = store.getQuads(subject, predicate, object, null)
+    if (!quads || !quads.length) { throw new Error(`Store lookup not found for ${subject?.value} - ${predicate?.value} - ${object?.value}`) }
+    return quads[0];
+}
+
+
+function getStoreValueArray(
+    store: Store, 
+    subject: null | NamedNode | BlankNode, 
+    predicate: null | NamedNode, 
+    object: null | NamedNode | BlankNode | Literal
+): Quad[] {
+    const quads = store.getQuads(subject, predicate, object, null)
+    if (!quads || !quads.length) { throw new Error(`Store lookup not found for ${subject?.value} - ${predicate?.value} - ${object?.value}`) }
+    return quads;
 }

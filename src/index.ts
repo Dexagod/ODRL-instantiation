@@ -21,6 +21,15 @@ const policyText = `
     odrl:assignee ex:alice;
     odrl:assigner ex:zeno.
 `;
+//     odrl:constraint <urn:uuid:1a7f3b7b-1b1b-4b3b-8b3b-1b1b3b1b1b1b>.
+// <urn:uuid:1a7f3b7b-1b1b-4b3b-8b3b-1b1b3b1b1b1b> a odrl:Constraint;
+//     odrl:leftOperand ex:currentTime;
+//     odrl:operator odrl:lt;
+//     odrl:rightOperand "2024-02-20T11:20:10.999Z"^^xsd:dateTime.
+// `;
+
+// todo: check constraint checking capabilities of ODRL evaluator
+
 const requestText = `
 @prefix odrl: <http://www.w3.org/ns/odrl/2/>.
 @prefix ex: <http://example.org/>.
